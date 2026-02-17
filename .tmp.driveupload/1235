@@ -1,0 +1,407 @@
+package com.example.eduu
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForwardIos
+import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
+
+// --- CONFIGURATION ---
+// TODO: Replace with your actual key
+const val GROQ_API_KEY = ""
+
+// ==========================================
+// 1. Main AI Screen Controller
+// ==========================================
+@Composable
+fun AIScreen() {
+    // 0 = Menu, 1 = PDF Chat, 2 = YouTube Summarizer
+    var activeScreen by remember { mutableIntStateOf(0) }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        when (activeScreen) {
+            0 -> AIMenu(onNavigate = { activeScreen = it })
+            1 -> PDFChatScreen(onBack = { activeScreen = 0 })
+            2 -> YouTubeSummarizerScreen(onBack = { activeScreen = 0 })
+        }
+    }
+}
+
+// ==========================================
+// 2. AI Menu (Selection Screen)
+// ==========================================
+@Composable
+fun AIMenu(onNavigate: (Int) -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(20.dp)
+            // Add padding at bottom to avoid Navigation Pill overlap
+            .padding(bottom = 100.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(modifier = Modifier.height(20.dp))
+        Text("AI Assistant", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        Text("Powered by Groq", color = Color.Gray, fontSize = 14.sp)
+
+        Spacer(modifier = Modifier.height(40.dp))
+
+        // Option 1: Chat with PDF
+        AIFeatureCard(
+            icon = Icons.Rounded.PictureAsPdf,
+            title = "Chat with PDF",
+            desc = "Upload documents and ask questions.",
+            color = Color(0xFFF43F5E),
+            onClick = { onNavigate(1) }
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Option 2: YouTube Summarizer
+        AIFeatureCard(
+            icon = Icons.Rounded.PlayCircle,
+            title = "YouTube Summarizer",
+            desc = "Get instant summaries of study videos.",
+            color = Color(0xFF6366F1),
+            onClick = { onNavigate(2) }
+        )
+    }
+}
+
+@Composable
+fun AIFeatureCard(icon: ImageVector, title: String, desc: String, color: Color, onClick: () -> Unit) {
+    DashboardGlassCard(modifier = Modifier.clickable { onClick() }) {
+        Row(
+            modifier = Modifier.padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(50.dp)
+                    .clip(CircleShape)
+                    .background(color.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, null, tint = color, modifier = Modifier.size(28.dp))
+            }
+            Spacer(modifier = Modifier.width(16.dp))
+            Column {
+                Text(title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(desc, color = Color.Gray, fontSize = 12.sp)
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            Icon(Icons.AutoMirrored.Filled.ArrowForwardIos, null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+        }
+    }
+}
+
+// ==========================================
+// 3. Chat with PDF Screen
+// ==========================================
+@Composable
+fun PDFChatScreen(onBack: () -> Unit) {
+    var message by remember { mutableStateOf("") }
+    var chatHistory by remember { mutableStateOf(listOf<ChatMessage>(
+        ChatMessage("Hi! Upload a PDF or paste text to get started.", false)
+    )) }
+    var isLoading by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    // Main Column with Navigation Padding
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .padding(bottom = 90.dp) // CRITICAL FIX: Pushes content above Bottom Nav
+            .imePadding() // Pushes content up when Keyboard opens
+    ) {
+        // Header
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
+            Text("Chat with PDF", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(onClick = { /* TODO: File Picker */ }) {
+                Icon(Icons.Default.AttachFile, null, tint = Color(0xFF6366F1))
+            }
+        }
+
+        // Chat List
+        LazyColumn(
+            modifier = Modifier.weight(1f).padding(vertical = 10.dp),
+            reverseLayout = true
+        ) {
+            items(chatHistory.reversed()) { msg ->
+                ChatBubble(msg)
+            }
+        }
+
+        if (isLoading) {
+            Text("AI is typing...", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(bottom = 8.dp))
+        }
+
+        // Input Area
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.weight(1f)) {
+                GlassTextField(
+                    value = message,
+                    onValueChange = { message = it },
+                    label = "Ask about your document...",
+                    icon = Icons.AutoMirrored.Filled.Send
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Button(
+                onClick = {
+                    if (message.isNotBlank()) {
+                        val userMsg = message
+                        chatHistory = chatHistory + ChatMessage(userMsg, true)
+                        message = ""
+                        isLoading = true
+
+                        scope.launch {
+                            val response = GroqClient.generateResponse(userMsg)
+                            chatHistory = chatHistory + ChatMessage(response, false)
+                            isLoading = false
+                        }
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6366F1)),
+                shape = CircleShape,
+                modifier = Modifier.size(50.dp),
+                contentPadding = PaddingValues(0.dp)
+            ) {
+                Icon(Icons.Default.Send, null, tint = Color.White)
+            }
+        }
+    }
+}
+
+// ==========================================
+// 4. YouTube Summarizer Screen
+// ==========================================
+@Composable
+fun YouTubeSummarizerScreen(onBack: () -> Unit) {
+    var link by remember { mutableStateOf("") }
+    var summary by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    // Content with Navigation Padding
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .padding(bottom = 90.dp) // CRITICAL FIX: Pushes content above Bottom Nav
+            .imePadding()
+    ) {
+        // Header
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
+            Text("YouTube Summarizer", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text("Paste YouTube Link", color = Color.Gray, fontSize = 14.sp)
+        Spacer(modifier = Modifier.height(8.dp))
+
+        GlassTextField(
+            value = link,
+            onValueChange = { link = it },
+            label = "https://youtube.com/...",
+            icon = Icons.Default.Link
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Button(
+            onClick = {
+                if (link.isNotBlank()) {
+                    isLoading = true
+                    summary = ""
+                    scope.launch {
+                        // NOTE: For better results, you normally need a backend to fetch transcripts.
+                        // This prompt relies on the AI's general knowledge if the link contains a title,
+                        // otherwise it might hallucinate.
+                        val prompt = "Summarize this YouTube video topic: $link. Provide 5 key bullet points for a student."
+                        val response = GroqClient.generateResponse(prompt)
+                        summary = response
+                        isLoading = false
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6366F1)),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            if (isLoading) CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
+            else Text("Summarize Video")
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        if (summary.isNotBlank()) {
+            Text("Summary:", color = Color.White, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Scrollable Summary Area
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                item {
+                    DashboardGlassCard {
+                        Text(
+                            text = summary,
+                            color = Color.White.copy(alpha = 0.8f),
+                            modifier = Modifier.padding(16.dp),
+                            lineHeight = 22.sp
+                        )
+                    }
+                }
+            }
+        } else {
+            Spacer(modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+// ==========================================
+// 5. Shared Components
+// ==========================================
+
+data class ChatMessage(val text: String, val isUser: Boolean)
+
+@Composable
+fun ChatBubble(message: ChatMessage) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalArrangement = if (message.isUser) Arrangement.End else Arrangement.Start
+    ) {
+        if (!message.isUser) {
+            Box(
+                modifier = Modifier.size(32.dp).clip(CircleShape).background(Color(0xFF6366F1)),
+                contentAlignment = Alignment.Center
+            ) { Icon(Icons.Default.AutoAwesome, null, tint = Color.White, modifier = Modifier.size(16.dp)) }
+            Spacer(modifier = Modifier.width(8.dp))
+        }
+
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(16.dp))
+                .background(if (message.isUser) Color(0xFF6366F1).copy(alpha = 0.3f) else Color.White.copy(alpha = 0.1f))
+                .padding(12.dp)
+        ) {
+            Text(message.text, color = Color.White)
+        }
+    }
+}
+
+@Composable
+fun GlassTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    icon: ImageVector,
+    keyboardType: KeyboardType = KeyboardType.Text
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label, color = Color.White.copy(alpha = 0.7f)) },
+        leadingIcon = { Icon(icon, contentDescription = null, tint = Color.White.copy(alpha = 0.7f)) },
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = ImeAction.Default),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = Color(0xFF6366F1),
+            unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+            focusedTextColor = Color.White,
+            unfocusedTextColor = Color.White,
+            cursorColor = Color.White
+        )
+    )
+}
+
+// ==========================================
+// 6. Groq API Client
+// ==========================================
+object GroqClient {
+    suspend fun generateResponse(prompt: String): String {
+        return withContext(Dispatchers.IO) {
+            try {
+                val url = URL("https://api.groq.com/openai/v1/chat/completions")
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("Authorization", "Bearer $GROQ_API_KEY")
+                conn.doOutput = true
+
+                val jsonBody = JSONObject().apply {
+                    put("model", "llama3-8b-8192") // Fast model
+                    put("messages", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("role", "user")
+                            put("content", prompt)
+                        })
+                    })
+                }
+
+                val writer = OutputStreamWriter(conn.outputStream)
+                writer.write(jsonBody.toString())
+                writer.flush()
+
+                if (conn.responseCode == 200) {
+                    val reader = BufferedReader(InputStreamReader(conn.inputStream))
+                    val response = StringBuilder()
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        response.append(line)
+                    }
+                    reader.close()
+
+                    val jsonResponse = JSONObject(response.toString())
+                    val choices = jsonResponse.getJSONArray("choices")
+                    val content = choices.getJSONObject(0).getJSONObject("message").getString("content")
+                    content
+                } else {
+                    "Error: ${conn.responseMessage} (Code: ${conn.responseCode})"
+                }
+            } catch (e: Exception) {
+                "Failed to connect: ${e.message}. Check your internet or API Key."
+            }
+        }
+    }
+}

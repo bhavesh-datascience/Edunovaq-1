@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "851587212826",
+    "project_id": "authentication-test-bf90f",
+    "storage_bucket": "authentication-test-bf90f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:851587212826:android:dab7e05de3c051bcc6d3a3",
+        "android_client_info": {
+          "package_name": "com.example.eduu"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAa3KDA6qs9n5bL5Y7dV-bsBMqrsxsIcuk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
