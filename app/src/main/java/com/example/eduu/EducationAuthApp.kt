@@ -35,20 +35,28 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.eduu.ui.theme.EduuTheme
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FirebaseFirestore
+// REQUIRED CHANGE: Import PDFBox
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import com.example.eduu.ui.theme.EduuTheme
 
 // ==========================================
 // 1. The Main Activity
 // ==========================================
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // REQUIRED CHANGE: Initialize the PDF library context
+        // This is crucial for "Chat with PDF" to work.
+        PDFBoxResourceLoader.init(applicationContext)
+
         setContent {
             EduuTheme {
                 Surface(
@@ -416,7 +424,7 @@ class AuthViewModel : ViewModel() {
             is AuthEvent.NameChanged -> _uiState.value = _uiState.value.copy(name = event.name)
             is AuthEvent.ToggleMode -> _uiState.value = _uiState.value.copy(isLoginMode = !_uiState.value.isLoginMode, error = null)
             is AuthEvent.Submit -> performAuth()
-            is AuthEvent.DismissError -> _uiState.value = _uiState.value.copy(error = null) // <--- FIXED HERE
+            is AuthEvent.DismissError -> _uiState.value = _uiState.value.copy(error = null)
         }
     }
 

@@ -2,9 +2,12 @@ package com.example.eduu
 
 import android.annotation.SuppressLint
 import android.content.Context
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -20,7 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -43,6 +45,9 @@ fun DashboardScreen(
     onCalendarClick: () -> Unit
 ) {
     var currentTab by remember { mutableIntStateOf(0) }
+    // NEW: State to control Navigation Bar Visibility
+    var showNavBar by remember { mutableStateOf(true) }
+
     val context = LocalContext.current
     val dashboardViewModel: DashboardViewModel = viewModel()
 
@@ -69,14 +74,19 @@ fun DashboardScreen(
             Crossfade(targetState = currentTab, label = "TabSwitch") { tabIndex ->
                 when (tabIndex) {
                     0 -> HomeTab(userName, onProfileClick, onCalendarClick, dashboardViewModel)
-                    1 -> AITab()
+                    // NEW: Pass the toggle callback to AITab
+                    1 -> AITab(onToggleNavBar = { isVisible -> showNavBar = isVisible })
                     2 -> ToolsTab()
                     3 -> MeetsTab(userEmail, onLogout)
                 }
             }
         }
 
-        Box(
+        // NEW: Animated Visibility for Navigation Bar
+        AnimatedVisibility(
+            visible = showNavBar,
+            enter = slideInVertically { it }, // Slide up
+            exit = slideOutVertically { it }, // Slide down
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 30.dp, start = 20.dp, end = 20.dp)
@@ -131,7 +141,6 @@ fun HomeTab(
         Spacer(modifier = Modifier.height(30.dp))
 
         // --- 2. TOP STAT CARDS (FIXED LAYOUT) ---
-        // Increased height slightly to 160.dp to ensure text fits
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
@@ -214,12 +223,12 @@ fun GradientStatCard(
         modifier = modifier
             .clip(RoundedCornerShape(24.dp))
             .background(Brush.linearGradient(colors))
-            .padding(16.dp) // Reduced padding slightly to give content more room
+            .padding(16.dp)
     ) {
         Column(
-            modifier = Modifier.fillMaxSize(), // Use full size of box
-            verticalArrangement = Arrangement.Center, // Center vertically
-            horizontalAlignment = Alignment.CenterHorizontally // Center horizontally
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
                 text = title,
@@ -234,7 +243,7 @@ fun GradientStatCard(
                 Text(
                     text = value,
                     color = Color.White,
-                    fontSize = 36.sp, // Slightly smaller font to prevent overflow
+                    fontSize = 36.sp,
                     fontWeight = FontWeight.Bold
                 )
                 if (icon != null) {
@@ -342,7 +351,9 @@ fun DashboardGlassCard(modifier: Modifier = Modifier, content: @Composable () ->
     Surface(modifier = modifier.fillMaxWidth(), color = Color.White.copy(alpha = 0.05f), shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)), content = content)
 }
 
-@Composable fun AITab() { AIScreen() }
+// NEW: AITab now accepts the toggle callback
+@Composable fun AITab(onToggleNavBar: (Boolean) -> Unit) { AIScreen(onToggleNavBar) }
+
 @Composable fun ToolsTab() { ToolsScreen() }
 @Composable fun MeetsTab(email: String, onLogout: () -> Unit) { StudyMeetsScreen() }
 
