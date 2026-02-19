@@ -7,10 +7,16 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.text.TextUtils
+import android.webkit.MimeTypeMap
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -35,7 +41,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -46,12 +51,19 @@ import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.delay
+import java.io.File
+import java.io.FileOutputStream
+import java.util.UUID
 
 // ==========================================
 // Data Models
@@ -63,13 +75,43 @@ data class BlockableApp(
     var isBlocked: Boolean
 )
 
+data class NoteItem(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val isFolder: Boolean,
+    val parentId: String? = null,
+    val localFilePath: String? = null,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
 // ==========================================
 // 1. Main Tools Controller
 // ==========================================
 @Composable
-fun ToolsScreen() {
-    // 0 = Menu, 1 = Pomodoro, 2 = Scroll Block
+fun ToolsScreen(
+    onToggleNavBar: (Boolean) -> Unit = {},
+    sharedUri: Uri? = null,
+    onSharedUriHandled: () -> Unit = {}
+) {
+    // 0 = Menu, 1 = Pomodoro, 2 = Scroll Block, 3 = Notes Organizer
     var activeTool by remember { mutableIntStateOf(0) }
+
+    // Auto-hide Navigation Bar
+    LaunchedEffect(activeTool) {
+        onToggleNavBar(activeTool == 0)
+    }
+
+    // NEW: If a shared file arrives, instantly open the Notes Organizer tab
+    LaunchedEffect(sharedUri) {
+        if (sharedUri != null) {
+            activeTool = 3
+        }
+    }
+
+    // Intercept hardware back button to return to the tools menu
+    BackHandler(enabled = activeTool != 0) {
+        activeTool = 0
+    }
 
     Box(
         modifier = Modifier
@@ -81,6 +123,11 @@ fun ToolsScreen() {
             0 -> ToolsMenu(onNavigate = { activeTool = it })
             1 -> PomodoroFocusScreen(onBack = { activeTool = 0 })
             2 -> ScrollBlockScreen(onBack = { activeTool = 0 })
+            3 -> NotesOrganizerScreen(
+                onBack = { activeTool = 0 },
+                sharedUri = sharedUri,
+                onSharedUriHandled = onSharedUriHandled
+            )
         }
     }
 }
@@ -102,24 +149,32 @@ fun ToolsMenu(onNavigate: (Int) -> Unit) {
 
         Spacer(modifier = Modifier.height(40.dp))
 
-        // Tool 1: Pomodoro
         ToolCard(
             icon = Icons.Rounded.Timer,
             title = "Pomodoro Focus",
             desc = "Stay focused with the classic technique.",
-            color = Color(0xFF6366F1), // Indigo
+            color = Color(0xFF6366F1),
             onClick = { onNavigate(1) }
         )
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Tool 2: Scroll Block
         ToolCard(
             icon = Icons.Rounded.Block,
             title = "Scroll Block",
             desc = "Block distracting apps & Focus.",
-            color = Color(0xFFF43F5E), // Red/Pink
+            color = Color(0xFFF43F5E),
             onClick = { onNavigate(2) }
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        ToolCard(
+            icon = Icons.Rounded.FolderSpecial,
+            title = "Notes Organizer",
+            desc = "Save and arrange your class notes.",
+            color = Color(0xFF0EA5E9),
+            onClick = { onNavigate(3) }
         )
     }
 }
@@ -159,14 +214,13 @@ fun ToolCard(icon: ImageVector, title: String, desc: String, color: Color, onCli
 }
 
 // ==========================================
-// 3. Scroll Block Screen (Updated with Safety Checks)
+// 3. Scroll Block Screen
 // ==========================================
 @Composable
 fun ScrollBlockScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    val isPreview = LocalInspectionMode.current // Check if running in Android Studio Preview
+    val isPreview = LocalInspectionMode.current
 
-    // SAFE ACCESS: Shared Preferences
     val prefs = remember {
         if (!isPreview) {
             try { context.getSharedPreferences("study_tools_prefs", Context.MODE_PRIVATE) }
@@ -174,8 +228,6 @@ fun ScrollBlockScreen(onBack: () -> Unit) {
         } else null
     }
 
-    // SAFE ACCESS: Service Checking Logic
-    // We default to 'false' if in preview mode to prevent render crashes
     var isServiceEnabled by remember {
         mutableStateOf(
             if (isPreview) false
@@ -183,7 +235,6 @@ fun ScrollBlockScreen(onBack: () -> Unit) {
         )
     }
 
-    // Lifecycle observer to auto-refresh status (Skipped in Preview)
     if (!isPreview) {
         val lifecycleOwner = LocalLifecycleOwner.current
         DisposableEffect(lifecycleOwner) {
@@ -221,21 +272,15 @@ fun ScrollBlockScreen(onBack: () -> Unit) {
         "Your future is created by what you do today."
     )
 
-    // Sync Logic (Safe)
     LaunchedEffect(isFocusMode, apps.toList()) {
         if (prefs != null) {
             try {
-                // 1. Save Focus State
                 prefs.edit().putBoolean("is_focus_active", isFocusMode).apply()
-                // 2. Save Blocked List
                 val blockedNames = apps.filter { it.isBlocked }.map { it.name }.toSet()
                 prefs.edit().putStringSet("blocked_packages", blockedNames).apply()
-            } catch (e: Exception) {
-                // Ignore prefs errors in unstable environments
-            }
+            } catch (e: Exception) {}
         }
 
-        // 3. Timer Logic
         if (isFocusMode) {
             val startTime = System.currentTimeMillis()
             while (isFocusMode) {
@@ -253,7 +298,6 @@ fun ScrollBlockScreen(onBack: () -> Unit) {
                 .fillMaxSize()
                 .padding(horizontal = 20.dp)
         ) {
-            // --- Header ---
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -270,7 +314,6 @@ fun ScrollBlockScreen(onBack: () -> Unit) {
                 }
             }
 
-            // --- Status Card (Service Indicator) ---
             Surface(
                 color = if(isServiceEnabled) Color(0xFF00C853).copy(alpha = 0.1f) else Color(0xFFFFAB00).copy(alpha = 0.1f),
                 shape = RoundedCornerShape(16.dp),
@@ -279,13 +322,9 @@ fun ScrollBlockScreen(onBack: () -> Unit) {
                     .fillMaxWidth()
                     .padding(bottom = 24.dp)
                     .clickable {
-                        // Open Settings if not enabled, skip if in preview
                         if (!isServiceEnabled && !isPreview) {
-                            try {
-                                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                            } catch (e: Exception) {
-                                // Fallback
-                            }
+                            try { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                            catch (e: Exception) {}
                         }
                     }
             ) {
@@ -305,17 +344,12 @@ fun ScrollBlockScreen(onBack: () -> Unit) {
                             fontWeight = FontWeight.SemiBold
                         )
                         if(!isServiceEnabled) {
-                            Text(
-                                "Required to close other apps",
-                                fontSize = 12.sp,
-                                color = Color.White.copy(alpha = 0.7f)
-                            )
+                            Text("Required to close other apps", fontSize = 12.sp, color = Color.White.copy(alpha = 0.7f))
                         }
                     }
                 }
             }
 
-            // --- App Grid ---
             LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -332,7 +366,6 @@ fun ScrollBlockScreen(onBack: () -> Unit) {
             }
         }
 
-        // --- Bottom Floating Buttons ---
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -347,11 +380,7 @@ fun ScrollBlockScreen(onBack: () -> Unit) {
                 shadowElevation = 12.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Add Button
+                Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -368,7 +397,6 @@ fun ScrollBlockScreen(onBack: () -> Unit) {
                         }
                     }
 
-                    // Focus Button
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -393,7 +421,6 @@ fun ScrollBlockScreen(onBack: () -> Unit) {
             }
         }
 
-        // --- Dialog: Add Custom App ---
         if (showAddDialog) {
             AddAppDialog(
                 onDismiss = { showAddDialog = false },
@@ -404,26 +431,18 @@ fun ScrollBlockScreen(onBack: () -> Unit) {
             )
         }
 
-        // --- Focus Overlay ---
         AnimatedVisibility(
             visible = isFocusMode,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize()
         ) {
-            FocusModeOverlay(
-                quote = currentQuote,
-                seconds = timerSeconds,
-                onStop = { isFocusMode = false }
-            )
+            FocusModeOverlay(quote = currentQuote, seconds = timerSeconds, onStop = { isFocusMode = false })
         }
     }
 }
 
-// --- Helper Functions (Safeguarded) ---
-
 fun isAccessibilityServiceEnabled(context: Context, serviceName: String): Boolean {
-    // 1. Catch specific exceptions for previews
     try {
         val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? android.view.accessibility.AccessibilityManager ?: return false
         val enabledServices = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
@@ -436,12 +455,9 @@ fun isAccessibilityServiceEnabled(context: Context, serviceName: String): Boolea
         }
         return false
     } catch (e: Exception) {
-        // Return false if any system call fails (common in preview/simulators)
         return false
     }
 }
-
-// ... (Rest of UI Components: AppGridCard, AddAppDialog, FocusModeOverlay, PomodoroFocusScreen remain consistent)
 
 @Composable
 fun AppGridCard(app: BlockableApp, onToggle: () -> Unit) {
@@ -523,7 +539,6 @@ fun FocusModeOverlay(quote: String, seconds: Long, onStop: () -> Unit) {
     val mins = seconds / 60
     val secs = seconds % 60
     val timeString = "%02d:%02d".format(mins, secs)
-    // Only intercept Back press if NOT in preview mode (prevents getting stuck in preview)
     val isPreview = LocalInspectionMode.current
     if (!isPreview) {
         BackHandler(enabled = true) {}
@@ -562,7 +577,7 @@ fun FocusModeOverlay(quote: String, seconds: Long, onStop: () -> Unit) {
 }
 
 // ==========================================
-// 4. Pomodoro Focus Screen (With Safety Wrappers)
+// 4. Pomodoro Focus Screen
 // ==========================================
 @Composable
 fun PomodoroFocusScreen(onBack: () -> Unit) {
@@ -692,15 +707,12 @@ fun StatText(value: String, label: String) {
     }
 }
 
-// SAFE ACCESS: System Calls
 fun playNotificationSound(context: Context) {
     try {
         val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
         val r = RingtoneManager.getRingtone(context, notification)
         r.play()
-    } catch (e: Exception) {
-        // Ignore sound failures in preview
-    }
+    } catch (e: Exception) {}
 }
 
 fun sendNotification(context: Context, title: String, message: String) {
@@ -719,7 +731,352 @@ fun sendNotification(context: Context, title: String, message: String) {
             .setAutoCancel(true)
             .build()
         notificationManager.notify(1, notification)
+    } catch (e: Exception) {}
+}
+
+// ==========================================
+// 5. Notes Organizer Screen (Smart Local Storage)
+// ==========================================
+@Composable
+fun NotesOrganizerScreen(
+    onBack: () -> Unit,
+    sharedUri: Uri? = null,
+    onSharedUriHandled: () -> Unit = {}
+) {
+    val context = LocalContext.current
+    val allNotes = remember { mutableStateListOf<NoteItem>() }
+
+    var currentFolderId by remember { mutableStateOf<String?>(null) }
+    var folderBreadcrumbs by remember { mutableStateOf(listOf<Pair<String?, String>>(Pair(null, "My Notes"))) }
+
+    var showAddFolderDialog by remember { mutableStateOf(false) }
+
+    // Auto-load saved notes
+    LaunchedEffect(Unit) {
+        val savedNotes = loadNotesFromPrefs(context)
+        allNotes.clear()
+        allNotes.addAll(savedNotes)
+    }
+
+    // Auto-save notes whenever the list changes
+    LaunchedEffect(allNotes.toList()) {
+        saveNotesToPrefs(context, allNotes.toList())
+    }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let { selectedUri ->
+            val fileName = getFileName(context, selectedUri) ?: "Untitled_Document.pdf"
+            val localPath = copyFileToInternalStorage(context, selectedUri, fileName)
+
+            if (localPath != null) {
+                allNotes.add(
+                    NoteItem(
+                        name = fileName,
+                        isFolder = false,
+                        parentId = currentFolderId,
+                        localFilePath = localPath
+                    )
+                )
+            }
+        }
+    }
+
+    val currentItems = allNotes.filter { it.parentId == currentFolderId }.sortedByDescending { it.isFolder }
+
+    BackHandler {
+        if (currentFolderId == null) {
+            onBack()
+        } else {
+            val newBreadcrumbs = folderBreadcrumbs.dropLast(1)
+            folderBreadcrumbs = newBreadcrumbs
+            currentFolderId = newBreadcrumbs.last().first
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = {
+                    if (currentFolderId == null) onBack()
+                    else {
+                        val newBreadcrumbs = folderBreadcrumbs.dropLast(1)
+                        folderBreadcrumbs = newBreadcrumbs
+                        currentFolderId = newBreadcrumbs.last().first
+                    }
+                }) {
+                    Icon(Icons.Default.ArrowBack, null, tint = Color.White)
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+
+                val breadcrumbText = folderBreadcrumbs.joinToString(" > ") { it.second }
+                Text(
+                    text = breadcrumbText,
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            if (currentItems.isEmpty()) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Rounded.FolderOpen, null, tint = Color.Gray.copy(alpha = 0.5f), modifier = Modifier.size(80.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("This folder is empty", color = Color.Gray, fontSize = 16.sp)
+                        Text("Add a sub-folder or import a note", color = Color.Gray.copy(alpha = 0.7f), fontSize = 12.sp)
+                    }
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    contentPadding = PaddingValues(bottom = 120.dp, top = 10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(currentItems) { item ->
+                        NoteGridItem(item) {
+                            if (item.isFolder) {
+                                currentFolderId = item.id
+                                folderBreadcrumbs = folderBreadcrumbs + Pair(item.id, item.name)
+                            } else {
+                                // Trigger the file opener intent
+                                openFile(context, item.localFilePath)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- NEW: FLOATING "SAVE SHARED FILE" BANNER ---
+        if (sharedUri != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 110.dp) // Hovers just above standard buttons
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(64.dp)
+                        .clickable {
+                            val fileName = getFileName(context, sharedUri) ?: "Shared_Note_${System.currentTimeMillis()}"
+                            val localPath = copyFileToInternalStorage(context, sharedUri, fileName)
+
+                            if (localPath != null) {
+                                allNotes.add(
+                                    NoteItem(name = fileName, isFolder = false, parentId = currentFolderId, localFilePath = localPath)
+                                )
+                                Toast.makeText(context, "Saved to current folder!", Toast.LENGTH_SHORT).show()
+                                onSharedUriHandled() // Clear the state
+                            }
+                        },
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFF10B981), // Emerald Green
+                    shadowElevation = 8.dp
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(Icons.Rounded.Download, null, tint = Color.White)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text("Save Shared File Here", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
+                }
+            }
+        }
+
+        // Standard Bottom Navigation for Notes Screen
+        Box(
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 40.dp)
+        ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Surface(
+                    modifier = Modifier.weight(1f).height(56.dp).clickable { showAddFolderDialog = true },
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFF1B262C).copy(alpha = 0.95f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF0EA5E9).copy(alpha = 0.3f))
+                ) {
+                    Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                        Icon(Icons.Rounded.CreateNewFolder, null, tint = Color(0xFF0EA5E9))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("New Folder", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+
+                Surface(
+                    modifier = Modifier.weight(1f).height(56.dp).clickable {
+                        filePickerLauncher.launch(arrayOf("application/pdf", "image/*", "text/plain"))
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    color = Brush.horizontalGradient(listOf(Color(0xFF0284C7), Color(0xFF0EA5E9)))?.let { Color.Transparent } ?: Color(0xFF0EA5E9),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+                ) {
+                    Box(modifier = Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color(0xFF0284C7), Color(0xFF0EA5E9))))) {
+                        Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                            Icon(Icons.Rounded.UploadFile, null, tint = Color.White)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Import Note", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+
+        if (showAddFolderDialog) {
+            AddFolderDialog(
+                onDismiss = { showAddFolderDialog = false },
+                onAdd = { folderName ->
+                    allNotes.add(NoteItem(name = folderName, isFolder = true, parentId = currentFolderId))
+                    showAddFolderDialog = false
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun NoteGridItem(item: NoteItem, onClick: () -> Unit) {
+    val bgColor = if (item.isFolder) Color(0xFF0EA5E9).copy(alpha = 0.1f) else Color.White.copy(alpha = 0.05f)
+    val iconColor = if (item.isFolder) Color(0xFF38BDF8) else Color(0xFFF87171)
+    val icon = if (item.isFolder) Icons.Rounded.Folder else Icons.Rounded.PictureAsPdf
+
+    Box(
+        modifier = Modifier.aspectRatio(1f).clip(RoundedCornerShape(16.dp)).background(bgColor).border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(16.dp)).clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(12.dp)) {
+            Icon(icon, null, tint = iconColor, modifier = Modifier.size(40.dp))
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(item.name, style = MaterialTheme.typography.bodyMedium, color = Color.White, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+fun AddFolderDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
+    var text by remember { mutableStateOf("") }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(24.dp), color = Color(0xFF1E1E2E), border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)), modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                Text("Create New Folder", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = text, onValueChange = { text = it }, label = { Text("Subject or Topic Name", color = Color.Gray) },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF0EA5E9), unfocusedBorderColor = Color.Gray, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = onDismiss) { Text("Cancel", color = Color.Gray) }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(onClick = { if (text.isNotBlank()) onAdd(text) }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))) { Text("Create", color = Color.White) }
+                }
+            }
+        }
+    }
+}
+
+// --- Helper Functions for File Operations & SharedPreferences ---
+
+fun saveNotesToPrefs(context: Context, notes: List<NoteItem>) {
+    val prefs = context.getSharedPreferences("edunovaq_notes_prefs", Context.MODE_PRIVATE)
+    val json = Gson().toJson(notes)
+    prefs.edit().putString("saved_notes_data", json).apply()
+}
+
+fun loadNotesFromPrefs(context: Context): List<NoteItem> {
+    val prefs = context.getSharedPreferences("edunovaq_notes_prefs", Context.MODE_PRIVATE)
+    val json = prefs.getString("saved_notes_data", null) ?: return emptyList()
+
+    val type = object : TypeToken<List<NoteItem>>() {}.type
+    return try {
+        Gson().fromJson(json, type)
     } catch (e: Exception) {
-        // Ignore notification failures in preview
+        emptyList()
+    }
+}
+
+fun getFileName(context: Context, uri: Uri): String? {
+    var result: String? = null
+    if (uri.scheme == "content") {
+        val cursor = context.contentResolver.query(uri, null, null, null, null)
+        try {
+            if (cursor != null && cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index != -1) result = cursor.getString(index)
+            }
+        } finally {
+            cursor?.close()
+        }
+    }
+    if (result == null) {
+        result = uri.path
+        val cut = result?.lastIndexOf('/') ?: -1
+        if (cut != -1) result = result?.substring(cut + 1)
+    }
+    return result
+}
+
+fun copyFileToInternalStorage(context: Context, uri: Uri, fileName: String): String? {
+    return try {
+        val notesDir = File(context.filesDir, "edunovaq_notes")
+        if (!notesDir.exists()) notesDir.mkdirs()
+
+        val destFile = File(notesDir, "${System.currentTimeMillis()}_$fileName")
+        val inputStream = context.contentResolver.openInputStream(uri)
+        val outputStream = FileOutputStream(destFile)
+
+        inputStream?.use { input ->
+            outputStream.use { output ->
+                input.copyTo(output)
+            }
+        }
+        destFile.absolutePath
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
+    }
+}
+
+// Generates a secure URI using FileProvider and opens it with compatible apps
+fun openFile(context: Context, filePath: String?) {
+    if (filePath == null) return
+    try {
+        val file = File(filePath)
+        if (!file.exists()) {
+            Toast.makeText(context, "File not found", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Must match the authority declared in AndroidManifest.xml
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+
+        val extension = MimeTypeMap.getFileExtensionFromUrl(file.absolutePath)
+        val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension.lowercase()) ?: "*/*"
+
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mimeType)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        context.startActivity(Intent.createChooser(intent, "Open Note with..."))
+    } catch (e: Exception) {
+        Toast.makeText(context, "Could not open file", Toast.LENGTH_SHORT).show()
+        e.printStackTrace()
     }
 }

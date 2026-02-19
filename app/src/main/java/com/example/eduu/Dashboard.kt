@@ -2,6 +2,8 @@ package com.example.eduu
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
@@ -45,11 +47,32 @@ fun DashboardScreen(
     onCalendarClick: () -> Unit
 ) {
     var currentTab by remember { mutableIntStateOf(0) }
-    // NEW: State to control Navigation Bar Visibility
     var showNavBar by remember { mutableStateOf(true) }
 
     val context = LocalContext.current
     val dashboardViewModel: DashboardViewModel = viewModel()
+
+    // --- CATCH SHARED FILES ---
+    val activity = LocalContext.current as android.app.Activity
+    var sharedUri by remember { mutableStateOf<Uri?>(null) }
+
+    LaunchedEffect(activity.intent) {
+        val intent = activity.intent
+        if (intent?.action == Intent.ACTION_SEND) {
+            val uri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            }
+
+            if (uri != null) {
+                sharedUri = uri
+                currentTab = 2 // Switch to the Tools Tab automatically!
+                intent.action = Intent.ACTION_MAIN // Clear the action so it doesn't loop
+            }
+        }
+    }
 
     // Initialize Streak and Data
     LaunchedEffect(Unit) {
@@ -74,15 +97,18 @@ fun DashboardScreen(
             Crossfade(targetState = currentTab, label = "TabSwitch") { tabIndex ->
                 when (tabIndex) {
                     0 -> HomeTab(userName, onProfileClick, onCalendarClick, dashboardViewModel)
-                    // NEW: Pass the toggle callback to AITab
                     1 -> AITab(onToggleNavBar = { isVisible -> showNavBar = isVisible })
-                    2 -> ToolsTab()
+                    2 -> ToolsTab(
+                        onToggleNavBar = { isVisible -> showNavBar = isVisible },
+                        sharedUri = sharedUri,
+                        onSharedUriHandled = { sharedUri = null }
+                    )
                     3 -> MeetsTab(userEmail, onLogout)
                 }
             }
         }
 
-        // NEW: Animated Visibility for Navigation Bar
+        // Animated Visibility for Navigation Bar
         AnimatedVisibility(
             visible = showNavBar,
             enter = slideInVertically { it }, // Slide up
@@ -145,7 +171,6 @@ fun HomeTab(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Card 1: Study Streak
             GradientStatCard(
                 modifier = Modifier.weight(1f).height(160.dp),
                 title = "Study Streak",
@@ -155,7 +180,6 @@ fun HomeTab(
                 colors = listOf(Color(0xFF8B5CF6), Color(0xFFEC4899))
             )
 
-            // Card 2: Total Hours
             GradientStatCard(
                 modifier = Modifier.weight(1f).height(160.dp),
                 title = "Total Hours",
@@ -338,7 +362,6 @@ fun PerformanceRow(label: String, valueText: String, progress: Float, color: Col
     }
 }
 
-// --- KEEP EXISTING HELPERS ---
 @Composable
 fun HeaderIconButton(icon: ImageVector, onClick: () -> Unit) {
     Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(Color.White.copy(0.1f)).clickable { onClick() }, contentAlignment = Alignment.Center) {
@@ -351,13 +374,27 @@ fun DashboardGlassCard(modifier: Modifier = Modifier, content: @Composable () ->
     Surface(modifier = modifier.fillMaxWidth(), color = Color.White.copy(alpha = 0.05f), shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)), content = content)
 }
 
-// NEW: AITab now accepts the toggle callback
-@Composable fun AITab(onToggleNavBar: (Boolean) -> Unit) { AIScreen(onToggleNavBar) }
+// ==========================================
+// TABS & NAVIGATION COMPONENTS
+// ==========================================
 
-@Composable fun ToolsTab() { ToolsScreen() }
-@Composable fun MeetsTab(email: String, onLogout: () -> Unit) { StudyMeetsScreen() }
+@Composable
+fun AITab(onToggleNavBar: (Boolean) -> Unit) {
+    AIScreen(onToggleNavBar)
+}
 
-@Composable fun GlassNavigationPill(selectedTab: Int, onTabSelected: (Int) -> Unit) {
+@Composable
+fun ToolsTab(onToggleNavBar: (Boolean) -> Unit, sharedUri: Uri?, onSharedUriHandled: () -> Unit) {
+    ToolsScreen(onToggleNavBar, sharedUri, onSharedUriHandled)
+}
+
+@Composable
+fun MeetsTab(email: String, onLogout: () -> Unit) {
+    StudyMeetsScreen()
+}
+
+@Composable
+fun GlassNavigationPill(selectedTab: Int, onTabSelected: (Int) -> Unit) {
     Surface(color = Color(0xFF0F172A).copy(0.9f), shape = RoundedCornerShape(50.dp), border = BorderStroke(1.dp, Color.White.copy(0.1f)), modifier = Modifier.height(70.dp).fillMaxWidth()) {
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
             NavIcon(Icons.Filled.Home, "Home", selectedTab == 0) { onTabSelected(0) }
@@ -367,7 +404,9 @@ fun DashboardGlassCard(modifier: Modifier = Modifier, content: @Composable () ->
         }
     }
 }
-@Composable fun NavIcon(icon: ImageVector, label: String, isSelected: Boolean, onClick: () -> Unit) {
+
+@Composable
+fun NavIcon(icon: ImageVector, label: String, isSelected: Boolean, onClick: () -> Unit) {
     val color = if (isSelected) Color(0xFF6366F1) else Color.Gray
     val scale by animateFloatAsState(if (isSelected) 1.2f else 1.0f, label = "scale")
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.noRippleClickable { onClick() }) {
@@ -375,9 +414,11 @@ fun DashboardGlassCard(modifier: Modifier = Modifier, content: @Composable () ->
         if (isSelected) { Spacer(Modifier.height(4.dp)); Box(Modifier.size(4.dp).clip(CircleShape).background(color)) }
     }
 }
+
 fun Modifier.noRippleClickable(onClick: () -> Unit): Modifier = composed {
     clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { onClick() }
 }
+
 @SuppressLint("UseKtx")
 fun updateAndGetStreak(context: Context): Int {
     val prefs = context.getSharedPreferences("edunovaq_prefs", Context.MODE_PRIVATE)
@@ -389,5 +430,3 @@ fun updateAndGetStreak(context: Context): Int {
     prefs.edit { putLong("last_login_day", today); putInt("user_streak", newStreak) }
     return newStreak
 }
-
-

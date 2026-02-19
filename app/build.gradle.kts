@@ -79,6 +79,8 @@ dependencies {
 
     // NEW: Jsoup for YouTube Metadata Extraction
     implementation("org.jsoup:jsoup:1.17.2")
+
+    implementation("com.google.code.gson:gson:2.10.1")
     // Testing
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

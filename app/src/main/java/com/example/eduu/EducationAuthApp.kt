@@ -1,5 +1,6 @@
 package com.example.eduu
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.animation.OvershootInterpolator
 import androidx.activity.ComponentActivity
@@ -50,6 +51,10 @@ import kotlinx.coroutines.flow.asStateFlow
 // ==========================================
 
 class MainActivity : ComponentActivity() {
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
