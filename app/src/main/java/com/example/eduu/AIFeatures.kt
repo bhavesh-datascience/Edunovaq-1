@@ -10,10 +10,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
-import android.util.Log
-import android.webkit.WebChromeClient
 import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -36,8 +33,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
@@ -57,16 +52,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import com.example.eduu.BuildConfig
 import com.google.ai.client.generativeai.GenerativeModel
-import com.google.ai.client.generativeai.type.HarmCategory
-import com.google.ai.client.generativeai.type.SafetySetting
 import com.google.ai.client.generativeai.type.content
 import kotlinx.coroutines.launch
 import java.util.Locale
 
 // ==========================================
 // 1. MAIN SCREEN
+// ==========================================
+
+
+
+// ==========================================
+// 2. AI MENU (With Arrows)
 // ==========================================
 @Composable
 fun AIScreen(onToggleNavBar: (Boolean) -> Unit = {}) {
@@ -78,11 +76,14 @@ fun AIScreen(onToggleNavBar: (Boolean) -> Unit = {}) {
             2 -> PDFChatScreen(onBack = { activeScreen = 0 }, onToggleNavBar = onToggleNavBar)
             3 -> YouTubeSummarizerScreen(onBack = { activeScreen = 0 }, onToggleNavBar = onToggleNavBar)
             4 -> ChartMakerScreen(onBack = { activeScreen = 0 }, onToggleNavBar = onToggleNavBar)
+            // --- NEW: AI SCHEDULE MAKER ---
+            5 -> AIScheduleMakerScreen(
+                onBack = { activeScreen = 0 },
+                onToggleNavBar = onToggleNavBar
+            )
         }
     }
 }
-
-
 
 // ==========================================
 // 2. AI MENU (With Arrows)
@@ -94,7 +95,7 @@ fun AIMenu(onNavigate: (Int) -> Unit) {
             .fillMaxSize()
             .padding(20.dp)
             .padding(bottom = 100.dp)
-            .verticalScroll(rememberScrollState()), // Make it scrollable just in case
+            .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(modifier = Modifier.height(20.dp))
@@ -136,13 +137,24 @@ fun AIMenu(onNavigate: (Int) -> Unit) {
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // 4. ADD THIS MISSING CARD
+        // 4. AI Chart Maker
         AIFeatureCard(
             icon = Icons.Rounded.PieChart,
             title = "AI Chart Maker",
             desc = "Turn data into Flowcharts & Graphs.",
             color = Color(0xFFFF9800),
             onClick = { onNavigate(4) }
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // --- 5. NEW: AI SCHEDULE MAKER BUTTON ---
+        AIFeatureCard(
+            icon = Icons.Rounded.CalendarMonth,
+            title = "AI Schedule Maker",
+            desc = "Auto-plan your day and set reminders.",
+            color = Color(0xFF8B5CF6), // Purple
+            onClick = { onNavigate(5) }
         )
     }
 }

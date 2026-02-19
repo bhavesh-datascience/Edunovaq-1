@@ -389,3 +389,5 @@ fun updateAndGetStreak(context: Context): Int {
     prefs.edit { putLong("last_login_day", today); putInt("user_streak", newStreak) }
     return newStreak
 }
+
+
