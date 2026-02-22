@@ -81,6 +81,16 @@ dependencies {
     implementation("org.jsoup:jsoup:1.17.2")
 
     implementation("com.google.code.gson:gson:2.10.1")
+
+    // Jetpack Compose & Material 3 (Standard setup)
+    implementation(platform("androidx.compose:compose-bom:2024.02.00"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+
+    // Jitsi Meet SDK
+    // Use the latest stable 8.x or 9.x version available in the repository
+    implementation("org.jitsi.react:jitsi-meet-sdk:10.2.1")
     // Testing
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

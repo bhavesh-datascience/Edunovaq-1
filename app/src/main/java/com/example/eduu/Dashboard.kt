@@ -103,7 +103,7 @@ fun DashboardScreen(
                         sharedUri = sharedUri,
                         onSharedUriHandled = { sharedUri = null }
                     )
-                    3 -> MeetsTab(userEmail, onLogout)
+                    3 -> MeetsTab(userEmail, userName, onLogout)
                 }
             }
         }
@@ -389,8 +389,8 @@ fun ToolsTab(onToggleNavBar: (Boolean) -> Unit, sharedUri: Uri?, onSharedUriHand
 }
 
 @Composable
-fun MeetsTab(email: String, onLogout: () -> Unit) {
-    StudyMeetsScreen()
+fun MeetsTab(email: String, userName: String, onLogout: () -> Unit) { // Added userName
+    StudyMeetsScreen(userEmail = email, userName = userName)
 }
 
 @Composable
