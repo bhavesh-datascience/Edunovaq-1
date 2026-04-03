@@ -1,9 +1,11 @@
 package com.example.eduu
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
@@ -53,13 +55,13 @@ fun DashboardScreen(
     val dashboardViewModel: DashboardViewModel = viewModel()
 
     // --- CATCH SHARED FILES ---
-    val activity = LocalContext.current as android.app.Activity
+    val activity = LocalContext.current as Activity
     var sharedUri by remember { mutableStateOf<Uri?>(null) }
 
     LaunchedEffect(activity.intent) {
         val intent = activity.intent
         if (intent?.action == Intent.ACTION_SEND) {
-            val uri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
             } else {
                 @Suppress("DEPRECATION")
@@ -103,7 +105,10 @@ fun DashboardScreen(
                         sharedUri = sharedUri,
                         onSharedUriHandled = { sharedUri = null }
                     )
-                    3 -> MeetsTab(userEmail, userName, onLogout)
+                    3 -> MeetsTab(
+                        userEmail, userName, onLogout,
+                        onToggleNavBar = TODO()
+                    )
                 }
             }
         }
@@ -388,9 +393,10 @@ fun ToolsTab(onToggleNavBar: (Boolean) -> Unit, sharedUri: Uri?, onSharedUriHand
     ToolsScreen(onToggleNavBar, sharedUri, onSharedUriHandled)
 }
 
+
 @Composable
-fun MeetsTab(email: String, userName: String, onLogout: () -> Unit) { // Added userName
-    StudyMeetsScreen(userEmail = email, userName = userName)
+fun MeetsTab(email: String, userName: String, onLogout: () -> Unit, onToggleNavBar: (Boolean) -> Unit) {
+    StudyMeetsScreen(userEmail = email, userName = userName, onToggleNavBar = onToggleNavBar)
 }
 
 @Composable
